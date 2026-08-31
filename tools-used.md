@@ -1,30 +1,33 @@
-# Herramientas usadas en la investigación
+# Tools used in this investigation
 
-| Herramienta | Versión | Para qué se usó |
+| Tool | Version | What it was used for |
 |---|---|---|
-| **Claude Code** | v2.1.246 | Agente de IA que condujo la investigación completa de forma interactiva: reconocimiento del entorno, instalación y depuración del entorno de emulación, escritura del script de desempaquetado, uso de rizin/Ghidra, y síntesis de hallazgos. |
-| **Debian GNU/Linux** | — | Sistema anfitrión del análisis. Sin acceso `sudo` con password durante toda la sesión — todo el trabajo se hizo en espacio de usuario. |
-| **`dd`** | — | Recorte (*unpadding*) del binario de 126.5 MB a 5 MB (`bs=1M count=5`), eliminando el relleno de baja entropía sin perder el código real. |
-| **Cutter** (AppImage) | — | GUI de ingeniería inversa. Se aprovechó su AppImage ya montado (`squashfs-root`) para reutilizar sus binarios internos de `rizin` sin instalar nada vía `apt`. |
-| **rizin** | 0.7.1 (extraído del AppImage de Cutter) | Desensamblado estático headless (`rz-asm`), listado de funciones, y motor de análisis para el plugin de Ghidra. |
-| **rz-ghidra** (`core_ghidra.so`) | integrado en Cutter | Decompilador de Ghidra vía rizin, usado para obtener pseudocódigo C de `fcn.140012470` y `fcn.140012230`. Requirió apuntar `SLEIGHHOME` a las especificaciones Sleigh (`x86-64.sla`) incluidas en el propio AppImage. |
-| **Python** | 3.13.5 | Lenguaje del entorno de emulación. |
-| **venv de Python aislado** | — | Entorno virtual dedicado (`malware_venv`), sin tocar el Python del sistema. |
-| **Speakeasy** (`speakeasy-emulator`) | 1.5.11 | Motor de emulación de Windows PE (sobre Unicorn) usado para ejecutar el stub desempaquetador del binario sin un sistema Windows real, con hooks personalizados sobre CryptoAPI, memoria y Thread Pool APIs. |
-| **Unicorn Engine** | 1.0.2 (fijado a propósito) | Motor de emulación de CPU subyacente de Speakeasy. Se mantuvo en 1.0.2 (en vez de 2.x) porque Speakeasy 1.5.11 no es compatible con la API interna de Unicorn 2.x. |
-| **setuptools** | — | Proveía el shim de compatibilidad para `distutils`, eliminado en Python 3.13 pero requerido por `unicorn==1.0.2`. |
-| **Capstone** | 5.0.9 | Motor de desensamblado usado internamente por el tooling de análisis. |
-| **pefile** / **lief** | 2024.8.26 / 1.0.0 | Parseo de estructuras PE (cabeceras, secciones) desde Python. |
-| **pycryptodome** | — | Verificación independiente del descifrado AES-256-CBC (confirmar clave/IV reales fuera del propio emulador). |
-| **`strings`** | — | Extracción de cadenas ASCII/UTF-16LE del buffer desempaquetado para encontrar indicios legibles (la petición HTTP a `ipinfo.io`). |
+| **Claude Code** | v2.1.246 | AI agent that drove the investigation interactively: environment recon, setting up and debugging the emulation environment, writing the unpacking script, driving rizin/Ghidra, and synthesizing findings. |
+| **Debian GNU/Linux** | — | Analysis host. No passwordless `sudo` at any point — everything was done in user space. |
+| **`curl`** | — | Reproduced the stage-1/stage-2 PowerShell fetches and the archive download directly against the live infrastructure, without ever executing the returned content. Also used to discover the User-Agent gating behavior of the C2. |
+| **`dd`** | — | Truncated (*unpadded*) the 126.5 MB binary down to a functional 5 MB copy (`bs=1M count=5`), stripping the low-entropy padding without losing any real code. |
+| **`objdump`** (Binutils) | — | Section table and linear disassembly of the original binary — cross-checked against the rizin/Ghidra findings below. |
+| **`strings`** | — | Extracted readable strings from both the original binary (imports, manifest, MinGW runtime strings) and the unpacked payload buffer (the `ipinfo.io` anti-sandbox check). |
+| **Cutter** (AppImage) | — | GUI reverse-engineering tool. Its already-mounted AppImage (`squashfs-root`) was reused to get working `rizin` binaries without installing anything via `apt`. |
+| **rizin** | 0.7.1 (extracted from Cutter's AppImage) | Headless static disassembly (`rz-asm`), function listing, and the analysis engine backing the Ghidra plugin. |
+| **rz-ghidra** (`core_ghidra.so`) | bundled with Cutter | Ghidra decompiler via rizin, used to get C pseudocode for `fcn.140012470` and `fcn.140012230`. Required pointing `SLEIGHHOME` at the Sleigh specs (`x86-64.sla`) bundled in the same AppImage. |
+| **Python** | 3.13.5 | Language used for the emulation environment. |
+| **Isolated Python venv** | — | Dedicated virtual environment (`malware_venv`), kept separate from the system Python. |
+| **Speakeasy** (`speakeasy-emulator`) | 1.5.11 | Windows PE emulation engine (built on Unicorn) used to run the unpacker stub with no real Windows machine involved, with custom hooks over CryptoAPI, memory writes, and the Thread Pool APIs. |
+| **Unicorn Engine** | 1.0.2 (pinned deliberately) | The underlying CPU emulation engine behind Speakeasy. Kept at 1.0.2 instead of 2.x because Speakeasy 1.5.11 isn't compatible with Unicorn 2.x's internal API. |
+| **setuptools** | — | Provided the `distutils` compatibility shim, removed from Python 3.13 but required by `unicorn==1.0.2`. |
+| **Capstone** | 5.0.9 | Disassembly engine used internally by the tooling. |
+| **pefile** / **lief** | 2024.8.26 / 1.0.0 | Parsing PE structures (headers, sections) from Python. |
+| **pycryptodome** | — | Independent verification of the AES-256-CBC decryption (confirming the real key/IV outside of the emulator itself). |
+| **7-Zip (`7z`)** | 25.01 | Extracting the attacker's password-protected archive for analysis, and building the AES-256-encrypted, filename-obfuscated bundle under [`samples/`](samples/) for this repo. |
 
-## Script propio de análisis
+## Custom analysis script
 
-Durante la investigación se escribió (y se fue corrigiendo iterativamente) un script de Python, `unpack_shahradr.py`, que:
+During the investigation, a Python script — `appendix/unpack_shahradr.py` — was written and iteratively fixed. It:
 
-1. Carga `shahradr_clean.exe` en Speakeasy con su base e imagen originales.
-2. Registra hooks sobre las APIs de CryptoAPI (`CryptAcquireContextW`, `CryptImportKey`, `CryptSetKeyParam`, `CryptDecrypt`) para loguear y, cuando hizo falta, reimplementar el descifrado real (parseando el `BLOBHEADER` de la clave).
-3. Registra un hook sobre `CreateThreadpoolWork` para capturar el puntero de contexto (el buffer ya descifrado) en el momento exacto en que se programa el callback, sin necesitar re-ejecutar la función real y lidiar con problemas de reentrancia del emulador.
-4. Vuelca a disco los buffers relevantes para su análisis posterior con `strings`/rizin.
+1. Loads `shahradr_clean.exe` into Speakeasy with its original base address and image.
+2. Hooks the CryptoAPI functions (`CryptAcquireContextW`, `CryptImportKey`, `CryptSetKeyParam`, `CryptDecrypt`) to log them and, where Speakeasy didn't already model them, re-implement the real decryption (parsing the key `BLOBHEADER` and running real AES/RC4/3DES/DES depending on the algorithm ID).
+3. Hooks `CreateThreadpoolWork` to capture the context pointer (the already-decrypted buffer) at the exact moment the callback is scheduled, instead of re-executing the function and risking emulator re-entrancy issues.
+4. Dumps the relevant buffers to disk for follow-up analysis with `strings`/rizin.
 
-Este repositorio **no incluye el script ni los binarios/volcados generados** (por decisión explícita de no subir archivos ejecutables ni muestras) — solo esta descripción de su funcionamiento, suficiente para que alguien con el mismo binario pueda reproducir el proceso.
+This repository includes the script (paths generalized, no personal directory names) — see [`appendix/unpack_shahradr.py`](appendix/unpack_shahradr.py).

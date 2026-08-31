@@ -1,7 +1,10 @@
-# Por diseño, este repo no debe contener binarios, muestras ni volcados de memoria
+# By design this repo should never contain loose/uncurated binaries.
+# The one deliberate exception is the encrypted, curated bundle under
+# samples/ (see samples/README.md) — everything else stays ignored.
 *.exe
 *.bin
-*.7z
 *.rzdb
 *.dll
 *.dmp
+*.7z
+!samples/malware-samples-PROTECTED.7z

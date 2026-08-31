@@ -1,58 +1,67 @@
-# Análisis de InfoStealer "shahradr" (PB-Fire C2)
+# InfoStealer "shahradr" Analysis (PB-Fire C2)
 
-> **Repositorio educativo / respuesta a incidente.** Documenta el análisis forense y de ingeniería inversa de un InfoStealer que comprometió una máquina personal. El objetivo es entender la cadena de infección completa y el mecanismo interno del malware con fines de aprendizaje y detección — **no contiene binarios, muestras ni scripts ejecutables del malware**, solo documentación, IOCs y diagramas.
+> **Educational / incident-response repository.** Documents the forensic and reverse-engineering analysis of an InfoStealer that compromised a personal machine. The goal is to understand the full infection chain and the malware's internals for learning and detection purposes.
 >
-> No se ejecutó nada de esto en un sistema en producción ni contra terceros: el análisis se hizo sobre una copia del binario ya extraído, en un entorno aislado (venv de Python + emulación con Unicorn/Speakeasy, sin acceso privilegiado del sistema).
+> This is a **private** repository. It contains the real malicious PowerShell scripts (as inert text files, see [`stages/`](stages/)) and encrypted copies of the real malware binaries (see [`samples/`](samples/)) recovered during the investigation, alongside the write-up. Nothing here is directly executable as delivered — see the warnings in both folders before touching either.
+>
+> Nothing in this repo was run against a production system or a third party: analysis of the compiled binary was done on an isolated copy, in a sandboxed environment (a Python venv + Unicorn/Speakeasy emulation, no elevated system access). The PowerShell stage scripts were retrieved with `curl` and only ever read as text, never executed.
 
-## Resumen ejecutivo
+## Executive summary
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Nombre de muestra | `shahradr.exe` |
-| Familia | InfoStealer (panel C2 en ruso, "PB-Fire") |
-| Vector inicial | PowerShell loader multi-etapa (`IEX` + `WebClient`) |
-| Empaquetador | Inflado con datos de baja entropía en `.reloc` (**no** son bytes `0x00`, ver [hallazgo 1](analysis/01-static-analysis.md)) |
-| Cifrado del payload | AES-256-CBC real vía Windows CryptoAPI (**no** RC4, ver [análisis dinámico](analysis/02-unpacking.md)) |
-| Evasión de control de flujo | Windows Thread Pool API (`CreateThreadpoolWork`) en vez de llamada directa |
-| Estado del análisis | Payload desempaquetado hasta obtener el stub de mapeo manual de PE; **no se llegó a reconstruir el PE final ni a decompilar las funciones de robo** (SQLite3/DPAPI/navegadores) — ver [limitaciones](#limitaciones-y-trabajo-pendiente) |
+| Sample name | `shahradr.exe` |
+| Family | InfoStealer (Russian-language C2 panel, "PB-Fire") |
+| Initial access | Victim socially engineered into manually running a PowerShell one-liner (exact lure not captured) — see [`analysis/01-initial-access.md`](analysis/01-initial-access.md) |
+| Delivery mechanism | Two chained, per-victim single-use PowerShell stages, loaded as dynamic modules (not plain `IEX`), gated by a User-Agent check |
+| Packer | Low-entropy filler in `.reloc` (**not** `0x00` bytes, see [finding 1](analysis/02-static-analysis.md#finding-1--the-reloc-padding-is-not-null-bytes)) — inflates the file from 1.4 MB (as delivered) to 126.5 MB |
+| Payload encryption | Real AES-256-CBC via the Windows CryptoAPI (**not** RC4, see [finding 2](analysis/03-dynamic-unpacking.md#finding-2--the-real-cipher-is-aes-256-cbc-not-rc4)) |
+| Control-flow evasion | Windows Thread Pool API (`CreateThreadpoolWork`) instead of a direct call |
+| Status | Payload unpacked down to a manual PE-mapper stub; **the final PE reconstruction and the actual data-theft functions (SQLite3/DPAPI/browser paths) were never reached** — see [Status & known limitations](#status--known-limitations) |
 
-## Cadena de infección (kill chain)
+## Verified infection chain
 
 ```mermaid
 flowchart TD
-    A["Fase 1 — PowerShell Loader\npowershell -nop -w hidden -c IEX(...)"] -->|"descarga file.php"| B["dragonphoenixstar.cfd/file.php\ndevuelve script Stage 2"]
-    B -->|"IEX del script devuelto"| C["Fase 2 — Fetch del contenedor\nsillygoosetoon.cfd/get.php"]
-    C -->|"DownloadFile"| D["Fase 3 — archive.7z cifrado\n(password: ver IOCs)"]
-    D -->|"Expand-7Zip + Start-Process"| E["Fase 4 — shahradr.exe (126.5 MB)\nrelleno de baja entropía en .reloc"]
-    E -->|"dd bs=1M count=5 (unpadding)"| F["shahradr_clean.exe (5 MB)\nbinario funcional para análisis"]
-    F --> G["Fase 5 — Ejecución y notificación C2\nPanel PB-Fire (ver IOCs)"]
-    G --> H["Marcador de infección .ok\nen %APPDATA%/%LOCALAPPDATA%"]
+    A["Victim runs a PowerShell one-liner\n(social engineering, exact lure unknown)"] -->|"irm + New-Module"| B["dragonphoenixstar.cfd/&lt;token-1&gt;\n(stage 1, per-victim URL)"]
+    B -->|"spawns hidden PowerShell"| C["dragonphoenixstar.cfd/&lt;token-2&gt;\n(stage 2, per-victim URL)"]
+    C -->|"downloads archive"| D["sillygoosetoon.cfd/dl/689838.7z\n(1.4 MB, password: 10000)"]
+    D -->|"7z extract"| E["shahradr.exe (126.5 MB)\nlow-entropy filler in .reloc"]
+    E -->|"Unblock-File + silent launch"| F["Marker: %TEMP%\\rx_unpack.ok"]
+    F --> G["Beacon: POST 91.92.33.156/panel/pb-fire\n(Russian-language panel)"]
 
     style A fill:#c62828,color:#fff
     style G fill:#6a1b9a,color:#fff
-    style H fill:#6a1b9a,color:#fff
+    style F fill:#6a1b9a,color:#fff
 ```
 
-Desglose completo con las respuestas exactas del servidor en cada etapa: [`analysis/04-c2-communication.md`](analysis/04-c2-communication.md).
+Full breakdown with the real, unmodified scripts: [`analysis/01-initial-access.md`](analysis/01-initial-access.md) and [`stages/`](stages/).
 
-## Contenido del repositorio
+> The initial written incident report this investigation started from described a *different* (and, once verified, inaccurate) mechanism — different URLs, wrong archive password, wrong cipher. See [`analysis/05-c2-infrastructure.md#discrepancy-with-the-initial-report`](analysis/05-c2-infrastructure.md#discrepancy-with-the-initial-report) for the full comparison. This repo documents the **verified** version, confirmed by the affected user directly reproducing the download chain with `curl` on Linux.
 
-- [`timeline.md`](timeline.md) — cronología de la investigación, turno por turno.
-- [`analysis/01-static-analysis.md`](analysis/01-static-analysis.md) — análisis estático del binario (Cutter/rizin), estructura PE, direcciones clave.
-- [`analysis/02-unpacking.md`](analysis/02-unpacking.md) — desempaquetado dinámico vía emulación (Speakeasy/Unicorn), cifrado real, extracción de clave/IV.
-- [`analysis/03-payload-analysis.md`](analysis/03-payload-analysis.md) — análisis del payload desempaquetado (stub de mapeo manual de PE, strings encontrados).
-- [`analysis/04-c2-communication.md`](analysis/04-c2-communication.md) — cadena de infección completa con respuestas del servidor.
-- [`iocs.md`](iocs.md) — indicadores de compromiso (dominios, IP, hashes de clave, contraseñas, marcadores).
-- [`data-exfiltrated.md`](data-exfiltrated.md) — qué tipo de datos está diseñado para robar este malware, y qué se confirmó vs. qué queda pendiente de confirmar.
-- [`tools-used.md`](tools-used.md) — herramientas usadas durante la investigación y para qué sirvió cada una.
-- [`appendix/commands-log.md`](appendix/commands-log.md) — comandos clave ejecutados durante el análisis (rutas genéricas, sin datos personales).
+## Repository contents
 
-## Limitaciones y trabajo pendiente
+- [`TIMELINE.md`](TIMELINE.md) — turn-by-turn timeline of the investigation itself.
+- [`analysis/01-initial-access.md`](analysis/01-initial-access.md) — the real, verified multi-stage PowerShell chain.
+- [`analysis/02-static-analysis.md`](analysis/02-static-analysis.md) — static analysis of the binary (Cutter/rizin/objdump), PE structure, key addresses.
+- [`analysis/03-dynamic-unpacking.md`](analysis/03-dynamic-unpacking.md) — dynamic unpacking via emulation (Speakeasy/Unicorn), the real cipher, key/IV extraction.
+- [`analysis/04-payload-analysis.md`](analysis/04-payload-analysis.md) — analysis of the unpacked payload (manual PE-mapper stub, strings found).
+- [`analysis/05-c2-infrastructure.md`](analysis/05-c2-infrastructure.md) — C2 beaconing and the discrepancy with the initial report.
+- [`iocs.md`](iocs.md) — indicators of compromise (domains, IP, hashes, passwords, markers).
+- [`data-exfiltrated.md`](data-exfiltrated.md) — what this malware family is designed to steal, and what was/wasn't confirmed.
+- [`tools-used.md`](tools-used.md) — tools used during the investigation and what each was for.
+- [`stages/`](stages/) — the real malicious PowerShell scripts, as inert text files, with warnings.
+- [`samples/`](samples/) — encrypted copies of the real binary artifacts, with warnings and extraction instructions.
+- [`appendix/commands-log.md`](appendix/commands-log.md) — key commands run during the investigation.
+- [`appendix/unpack_shahradr.py`](appendix/unpack_shahradr.py) — the custom emulation/unpacking script written for this analysis.
 
-Este análisis **corrigió varias hipótesis del reporte inicial** con evidencia real de emulación (ver detalle en cada documento), pero se detuvo antes de llegar a las funciones de robo de datos propiamente dichas:
+## Status & known limitations
 
-1. El stub desempaquetado es un *mapeador manual de PE* posicionalmente independiente, no un PE clásico con cabecera `MZ`.
-2. Le falta un puntero (offset `0xD`) hacia la imagen PE final, que normalmente se parcha justo antes de la ejecución real — no se localizó en esta sesión el punto exacto donde ocurre ese parche.
-3. Por lo tanto, **no se decompilaron las funciones reales de robo de credenciales/cookies/SQLite3/DPAPI** — solo se confirmó su existencia por el tipo de panel C2 y el diseño típico de esta familia de InfoStealer (ver [`data-exfiltrated.md`](data-exfiltrated.md)).
+This analysis **corrected several hypotheses** from the initial report with real evidence from emulation and direct infrastructure verification (see each document above), but stopped short of the actual data-theft functions:
 
-Quien retome este análisis debería continuar desde `fcn.140012470` (dirección del parche del puntero) para completar la reconstrucción del PE final.
+1. The unpacked stub is a *position-independent manual PE-mapper*, not a classic PE with an `MZ` header.
+2. It's missing a pointer (at offset `0xD`) to the final PE image, which normally gets patched right before real execution — this session didn't locate exactly where that patch happens.
+3. As a result, **the real credential/cookie/SQLite3/DPAPI theft functions were never decompiled** — their existence is inferred from the C2 panel type and the malware family's typical design (see [`data-exfiltrated.md`](data-exfiltrated.md)), not confirmed line-by-line.
+4. A secondary, unverified lead surfaced late in the investigation (an incidental "MZ" match found by reversing the payload buffer's byte order) but was never checked before the investigating session was interrupted — see [`analysis/03-dynamic-unpacking.md#what-was-left-unresolved`](analysis/03-dynamic-unpacking.md#what-was-left-unresolved).
+
+Anyone picking this back up should continue from `fcn.140012470` (the address where that pointer gets patched) to complete the final PE reconstruction.

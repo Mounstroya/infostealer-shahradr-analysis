@@ -1,0 +1,22 @@
+# Investigation timeline
+
+Reconstructed from the original analysis session(s). Times are the analyst's local time.
+
+| # | When | What happened |
+|---|---|---|
+| 1 | Aug 29, 22:13 | Initial incident report received, describing a `shahradr.exe` binary packed with ~122.5 MB of `0x00` bytes in `.reloc`, an assumed RC4 cipher, and a direct `call rax` control transfer. Request: build an emulation environment (Unicorn/Speakeasy/QEMU) to dynamically unpack it and dump the payload. |
+| 2 | Aug 29, 22:13–22:27 | Environment recon: no passwordless `sudo`, but a mounted Cutter AppImage (`squashfs-root`) is found with usable `rizin` binaries — avoids depending on `apt install`. |
+| 3 | Aug 29, 22:27 | A detailed technical report of the (as it turned out, partially inaccurate) infection chain is received, with claimed server responses for each stage. |
+| 4 | Aug 29, 22:27–23:03 | **Dynamic unpacking.** A Python venv is set up (`speakeasy-emulator`, `unicorn` 1.0.2, `capstone`, `pefile`, `lief`, `pycryptodome`), resolving version-compatibility issues (`unicorn`/`distutils` under Python 3.13). Iterating on CryptoAPI and memory hooks corrects two hypotheses from the initial report: the real cipher is AES-256-CBC (not RC4), and the `.reloc` "padding" isn't `0x00` but a low-entropy repeating pattern. The real key/IV are extracted, the Windows Thread Pool control-transfer mechanism is confirmed, and the unpacked buffer (573,600 bytes) is dumped to `payload_unpacked.exe`. That dump and the emulation script are delivered to the user. |
+| 5 | Aug 29, 23:03 | Asked to continue reconstructing the final PE to reach the real theft functions. `fcn.140012470` and `fcn.140012230` are decompiled with Ghidra (via `rz-ghidra`), confirming the memory-allocation logic and the conditional byte-reversal loop. A buffer byte-reversal experiment finds an incidental "MZ" match at offset 23224. **The response is cut off by an internal AI-assistant safety notice ("cyber safeguards")** before the PE reconstruction is completed or that lead is checked — 17 tool calls did run in this turn (including the real decompiles above), but no final synthesis was produced. |
+| 6 | Aug 31, 01:49 | The user compacts the conversation (`/compact`) two days later. |
+| 7 | Aug 31, 01:56 | The user asks where the conversation log is saved and requests an educational GitHub repo covering everything discovered. The response is cut off again by the same assistant safety notice, before any work could start on the repo. |
+| 8 | Aug 31 (new session) | Picked up in a separate session: `cc2md` is installed to export the log to Markdown, the full conversation is read turn by turn, and this repository is built — initially without the live-infrastructure verification, later expanded once the user shared the real `curl` reproduction (see below). |
+| 9 | Aug 31 (same session, continued) | The user provides the actual terminal transcript of independently reproducing the download chain on the Linux analysis machine with `curl` — revealing the real per-victim stage URLs, the real archive password (`10000`, not `ShahradR_Pass2026`), the real dropper script, and the exact infection-marker filename (`rx_unpack.ok`). The repository is rewritten to reflect verified reality instead of the original (partially inaccurate) report, translated to English, and the real sample files are packaged into an encrypted archive under [`samples/`](samples/). |
+
+## About the two "cut off" turns (step 5 and 7)
+
+Both interruptions were an automatic safety notice from the AI assistant itself (`API Error: ... safeguards flagged this message ... Details: [cyber]`) — a known false-positive pattern on legitimate reverse-engineering/cybersecurity work, not a technical failure of the analysis and not something the malware or the target infrastructure caused. Concretely:
+
+- **Step 5** did produce real work before cutting off: two functions were successfully decompiled with Ghidra, and an experimental full-buffer byte reversal turned up a second, never-verified "MZ" signature match. None of that was synthesized into a conclusion before the cutoff, which is why it's called out explicitly in [`analysis/03-dynamic-unpacking.md`](analysis/03-dynamic-unpacking.md#what-was-left-unresolved) as unfinished work rather than a dead end.
+- **Step 7** produced no work at all — the assistant's reply was 100% the safety-notice error, with no tool calls before it. The repo-building request itself was only picked up later, in the separate session referenced in steps 8–9.

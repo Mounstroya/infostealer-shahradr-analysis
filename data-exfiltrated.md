@@ -1,31 +1,31 @@
-# Qué datos puede robar este malware
+# What data this malware can steal
 
-**Importante:** esta investigación llegó hasta desempaquetar el stub cargador del payload final (ver [`analysis/03-payload-analysis.md`](analysis/03-payload-analysis.md)), pero **no se decompilaron las funciones reales de robo de datos** — el mapeador manual de PE quedó incompleto (falta un puntero que se parcha justo antes de la ejecución real). Por lo tanto, lo que sigue es una combinación de:
+**Important:** this investigation reached the point of unpacking the final payload's loader stub (see [`analysis/04-payload-analysis.md`](analysis/04-payload-analysis.md)), but **the actual data-theft functions were never decompiled** — the manual PE-mapper stub was left incomplete (it's missing a pointer that gets patched right before real execution). So what follows combines:
 
-- **Confirmado por el análisis:** la existencia de un panel C2 diseñado para recibir credenciales/cookies (mencionado explícitamente en el reporte forense inicial, ver [`analysis/04-c2-communication.md`](analysis/04-c2-communication.md)), y el hecho de que el binario referencia librerías CRT estándar de Windows que son consistentes con esta clase de malware.
-- **No confirmado / inferido por familia:** el detalle exacto de qué archivos lee, qué APIs de DPAPI/SQLite3 invoca y qué formato de exfiltración usa — porque esas funciones nunca llegaron a ejecutarse ni decompilarse en esta sesión.
+- **Confirmed by this analysis:** the existence of a C2 panel designed to receive credentials/cookies (explicitly mentioned in the initial forensic report, see [`analysis/05-c2-infrastructure.md`](analysis/05-c2-infrastructure.md)), and the fact that the binary's imports and dropper behavior (silent execution, Mark-of-the-Web removal, beaconing) are all consistent with this class of malware.
+- **Not confirmed / inferred by family:** the exact files it reads, which DPAPI/SQLite3 APIs it calls, and the exact exfiltration format — none of that code was reached or decompiled in this session.
 
-## Categorías típicas de un InfoStealer de este tipo (panel C2 "PB-Fire", en ruso)
+## Typical categories for this kind of InfoStealer (Russian-language "PB-Fire" panel)
 
-Esta familia de paneles suele apuntar a las siguientes categorías de datos en el equipo comprometido (**genérico de la familia, no confirmado dato por dato en esta muestra**):
+This class of panel typically targets the following categories of data on a compromised machine (**generic to the family, not confirmed item-by-item for this specific sample**):
 
-- Contraseñas guardadas en navegadores basados en Chromium/Firefox (protegidas con DPAPI en Windows).
-- Cookies de sesión activas (permiten secuestrar sesiones ya logueadas sin necesitar la contraseña).
-- Historial y autocompletado de formularios.
-- Datos de wallets de criptomonedas (extensiones de navegador o archivos locales de wallets de escritorio), común en esta clase de campañas.
-- Archivos de configuración de clientes FTP/VPN/mensajería si el stealer incluye "grabbers" adicionales.
-- Capturas de pantalla o información del sistema (fingerprinting), consistente con el chequeo de IP/geolocalización encontrado en el payload parcial (`ipinfo.io/what-is-my-ip`).
+- Passwords saved in Chromium/Firefox-based browsers (DPAPI-protected on Windows).
+- Active session cookies (allow hijacking already-logged-in sessions without needing the password).
+- Browser autofill/form history.
+- Cryptocurrency wallet data (browser extension wallets or local desktop wallet files) — common in this kind of campaign.
+- FTP/VPN/messaging client configuration files, if the stealer bundles additional "grabber" modules.
+- Screenshots or system fingerprinting info, consistent with the IP/geolocation check found in the partial payload (`ipinfo.io/what-is-my-ip`).
 
-## Qué hacer si tu equipo estuvo expuesto a esta muestra
+## What to do if your machine was exposed to this sample
 
-Dado que no se confirmó el alcance exacto, la recomendación de higiene es tratar el incidente como si **todo lo anterior** hubiera sido robado:
+Since the exact scope wasn't confirmed, the safe assumption is to treat the incident as if **everything above** was stolen:
 
-1. Rotar contraseñas de todas las cuentas guardadas en el navegador del equipo afectado (idealmente desde otro dispositivo limpio).
-2. Cerrar sesión de todos los dispositivos en los servicios críticos (invalida cookies de sesión robadas).
-3. Revisar y mover fondos de cualquier wallet de criptomonedas expuesta.
-4. Activar 2FA donde no estuviera activo.
-5. Reinstalar el sistema operativo del equipo comprometido en vez de solo "limpiar" el malware — un InfoStealer de este nivel de sofisticación (cifrado real, evasión con Thread Pool, anti-sandbox) no es trivial de erradicar con confianza total vía limpieza manual.
+1. Rotate the passwords for every account saved in the browser on the affected machine — ideally from a separate, clean device.
+2. Sign out of all devices/sessions on critical services (invalidates any stolen session cookies).
+3. Review and move funds out of any exposed cryptocurrency wallet.
+4. Enable 2FA anywhere it wasn't already on.
+5. Reinstall the operating system on the affected machine rather than just removing the malware — an InfoStealer this sophisticated (real crypto, Thread Pool-based evasion, anti-sandbox checks) isn't something to trust a manual cleanup with.
 
-## Trabajo pendiente para confirmar el alcance real
+## Pending work to confirm the real scope
 
-Completar la reconstrucción descrita en [`analysis/03-payload-analysis.md`](analysis/03-payload-analysis.md) permitiría decompilar las funciones reales y reemplazar esta sección por hallazgos confirmados en vez de inferencias de familia.
+Completing the reconstruction described in [`analysis/04-payload-analysis.md`](analysis/04-payload-analysis.md) would allow decompiling the actual functions and replacing this section with confirmed findings instead of family-level inference.
