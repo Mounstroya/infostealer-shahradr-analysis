@@ -1,0 +1,7 @@
+# Por diseño, este repo no debe contener binarios, muestras ni volcados de memoria
+*.exe
+*.bin
+*.7z
+*.rzdb
+*.dll
+*.dmp
