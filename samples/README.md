@@ -16,6 +16,8 @@ This folder contains an **AES-256 encrypted, filename-obfuscated 7z archive** wi
 
 None of these files are directly executable as delivered here — they're wrapped in an encrypted 7z container, and `malpack.7z` inside it has its own separate password.
 
+**Not bundled here:** the final reconstructed payload, `final_stealer_candidate.exe` (SHA-256 `3f6c58760052c60e33c2951196f7c46f54f9fd1d390956fef7aeb3b9156312ee`, see [`../analysis/05-final-payload-capabilities.md`](../analysis/05-final-payload-capabilities.md)) is a genuine, valid, unprotected PE — closer to "just the malware" than anything else in this repo, so it was deliberately left out of the archive rather than bundled automatically. It's fully reproducible from `payload_unpacked.exe` with the ~10-line Python recipe in that document (AES-256-CBC decrypt with the layer-2 key/IV, strip PKCS7 padding, reverse the buffer) if you need the actual bytes.
+
 ## How to safely extract (isolated VM / sandbox only)
 
 ```bash

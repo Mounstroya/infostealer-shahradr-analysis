@@ -1,6 +1,6 @@
 # 01 — Initial access (verified against live infrastructure)
 
-> This document supersedes the "kill chain" narrative from the initial written incident report the investigation started with. That report described a simpler mechanism (`file.php` / `get.php`, `IEX` + `WebClient`, archive password `ShahradR_Pass2026`) which, once checked directly against the live infrastructure with `curl`, **did not match reality** on several points. What follows is the verified version. See [`05-c2-infrastructure.md`](05-c2-infrastructure.md#discrepancy-with-the-initial-report) for the discrepancy list.
+> This document supersedes the "kill chain" narrative from the initial written incident report the investigation started with. That report described a simpler mechanism (`file.php` / `get.php`, `IEX` + `WebClient`, archive password `ShahradR_Pass2026`) which, once checked directly against the live infrastructure with `curl`, **did not match reality** on several points. What follows is the verified version. See [`06-c2-infrastructure.md`](06-c2-infrastructure.md#discrepancy-with-the-initial-report) for the discrepancy list.
 
 ## How the infection started
 
@@ -49,6 +49,6 @@ Fetching that second URL (same User-Agent requirement) returned the real dropper
 6. Extracts the archive with password **`10000`** (not `ShahradR_Pass2026` as the initial report claimed) into `%TEMP%\<guid>.7z_x`.
 7. Finds the first `.exe` inside the extracted folder, calls `Unblock-File` on it (removes the Mark-of-the-Web flag so Windows SmartScreen won't warn on launch), and starts it hidden (`-WindowStyle Hidden`).
 8. Writes the infection marker: `Set-Content (Join-Path $env:TEMP 'rx_unpack.ok') '1'` — this is the exact file the initial report vaguely described as "a marker file with `.ok` extension." Its real, full name is **`rx_unpack.ok`** in `%TEMP%`.
-9. Fires two network calls back to the attacker's infrastructure — a GET "delivery callback" and a POST "beacon" to the C2 panel. Full detail in [`05-c2-infrastructure.md`](05-c2-infrastructure.md).
+9. Fires two network calls back to the attacker's infrastructure — a GET "delivery callback" and a POST "beacon" to the C2 panel. Full detail in [`06-c2-infrastructure.md`](06-c2-infrastructure.md).
 
 From this point on, `shahradr.exe` (renamed on disk from whatever the archive contained) is running — see [`02-static-analysis.md`](02-static-analysis.md) onward for what happens inside the binary itself.

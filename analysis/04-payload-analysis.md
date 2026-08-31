@@ -10,6 +10,8 @@ The 573,600-byte buffer obtained in [`03-dynamic-unpacking.md`](03-dynamic-unpac
 
 In other words: **the loader stub itself is complete and intact**, but it's missing its "target" (the final PE image containing the actual stealer logic) because the dump was taken one step too early.
 
+> **Update:** that pointer turned out not to need an external patch at all — the mapper computes it itself, from a second encrypted blob embedded in this same buffer. See [`05-final-payload-capabilities.md`](05-final-payload-capabilities.md) for the full extraction and what the real final payload turned out to be.
+
 ## Anti-analysis / anti-sandbox evidence
 
 ASCII strings extracted from the buffer include:
@@ -25,11 +27,4 @@ The rest of the extracted strings are mostly high-entropy noise (short, non-prin
 
 ## What's needed to reach the actual stealer functions
 
-To decompile the real data-theft functions (browser credentials via DPAPI, SQLite3 cookie/password databases, browser profile paths) someone would need to:
-
-1. Locate, inside `fcn.140012470` (or an unexplored sub-function), the exact point where the pointer at offset `0xD` of the buffer gets written, before the mapper consumes it.
-2. Let the emulation run one step further past `CreateThreadpoolWork`, with that pointer already patched, so the mapper actually reconstructs the final PE image in memory.
-3. Dump that reconstructed image (fixing up PE headers if needed) and decompile it with Ghidra/rizin.
-4. Optionally verify the unresolved lead noted in [`03-dynamic-unpacking.md`](03-dynamic-unpacking.md#what-was-left-unresolved) — an incidental "MZ" match found when reversing the whole buffer's byte order, at offset `23224`, never checked for validity.
-
-This was left as pending work — see [`../README.md`](../README.md#status--known-limitations) and [`../data-exfiltrated.md`](../data-exfiltrated.md).
+This was originally left as pending work, on the assumption that the missing pointer required either an external patch or letting the real binary run past the network gate. Neither turned out to be true — see [`05-final-payload-capabilities.md`](05-final-payload-capabilities.md) for how a second, self-contained encrypted blob inside this same buffer was located and decrypted statically, producing a valid final-stage PE.

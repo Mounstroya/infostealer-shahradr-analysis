@@ -20,7 +20,12 @@ All of these are attacker-controlled infrastructure/artifacts, not the victim's 
 |---|---|
 | Required User-Agent substring | `WindowsPowerShell/5.1` — requests without it get an HTTP 301 instead of the payload |
 | Custom HTTP header sent by the dropper | `X-Panel-Internal: 1` |
-| Anti-sandbox check found in the unpacked payload | `GET /what-is-my-ip HTTP/1.1` to `ipinfo.io`, Chrome User-Agent |
+| Anti-sandbox / anti-analysis gate | `GET /what-is-my-ip HTTP/1.1` to `Host: ipinfo.io`, Chrome User-Agent; parses the HTML response's "ASN type" field and aborts if it contains `hosting` (i.e., refuses to run on datacenter/cloud/VPS IPs) |
+| AMSI bypass indicator | References to `AmsiScanBuffer` / `AmsiScanString` / `\System32\Amsi.dll` |
+| App-Bound Encryption bypass indicator | Literal string `appbound` + dynamically-loaded `Ole32.dll`/`OleAut32.dll` + `IIDFromString` (COM interop needed to call Chrome's elevated decryption service) |
+| Process masquerading targets referenced | `splwow64.exe`, `RuntimeBroker.exe`, `explorer.exe` |
+| Persistence mechanism referenced | Registry `Run` / `RunOnce` auto-start keys |
+| LOLBin execution referenced | Constructed `msiexec /i <path>` command line |
 
 ## Files and passwords
 
@@ -44,18 +49,24 @@ All of these are attacker-controlled infrastructure/artifacts, not the victim's 
 | `shahradr_clean.exe` (truncated, 5 MB) | `83ad6dd1537d6abb4847da24183ea5c58e5ebc1af772251b001b0f07c0032a8d` |
 | `payload_unpacked.exe` (decrypted stage-2 buffer) | `d468dedbb8e105ca4320a2d103e39437ccfd4633ef19c0fab7660efacbc8c344` |
 | `malpack.7z` (original delivered archive) | `f83dbb02d34bc4dedf53ac7f24aca7eda27d0d08d4c5962ee6172b85518892ea` |
+| `final_stealer_candidate.exe` (reconstructed final payload, valid PE) | `3f6c58760052c60e33c2951196f7c46f54f9fd1d390956fef7aeb3b9156312ee` |
 
 Encrypted copies of these files are available under [`samples/`](samples/) for anyone continuing this analysis.
 
 ## Internal cryptography (needed to reproduce the unpacking)
 
-| Indicator | Value |
-|---|---|
-| Algorithm | AES-256-CBC (Windows CryptoAPI, `CALG_AES_256`) |
-| Key (32 bytes, hex) | `cfcc13c0242c3d3cabaf192aee60adb06b3246547ab35444b0a5ee2ade97821` |
-| IV (16 bytes, hex) | `ea2f9b0cf0859c950c2cc2574780e05` |
+Two independent AES-256-CBC layers were found, each with its own key/IV embedded in the binary next to the data it protects — see [`analysis/03-dynamic-unpacking.md`](analysis/03-dynamic-unpacking.md) and [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md) for how each was found.
 
-## Internal binary addresses (this specific build)
+| Layer | Key (32 bytes, hex) | IV (16 bytes, hex) |
+|---|---|---|
+| 1 — outer packer (`shahradr.exe` → `payload_unpacked.exe`), via real Windows CryptoAPI | `cfcc13c0242c3d3cabaf192aee60adb06b3246547ab35444b0a5ee2ade97821` | `ea2f9b0cf0859c950c2cc2574780e05` |
+| 2 — embedded in `payload_unpacked.exe` itself (→ `final_stealer_candidate.exe`), decrypted with a local routine, no CryptoAPI | `4952f1563b2f0db80958a119b5024a4cfa4b861fbf3321b60ed70cd2a1a84698` | `fbc177a9cd6419601a55fb5e1431b0a7` |
+
+Layer 2 also requires reversing the decrypted buffer byte-for-byte after stripping PKCS7 padding — see the exact recipe in [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md#extracting-it).
+
+## Internal binary addresses
+
+**In `shahradr.exe` / `shahradr_clean.exe`** (absolute virtual addresses, image base `0x140000000`):
 
 | Address | Role |
 |---|---|
@@ -65,4 +76,15 @@ Encrypted copies of these files are available under [`samples/`](samples/) for a
 | `0x140012230` | Memory allocation / conditional byte-reversal function |
 | `0x1400123b0` – `0x14001240f` | Junk code + real control transfer |
 
-> These addresses are valid for this specific build of the malware (internal binary offsets) — useful for a YARA rule or unpacking script targeted at this exact sample, but expected to shift in recompiled variants of the same family.
+**In `payload_unpacked.exe`** (offsets relative to the buffer's own start — the shellcode is position-independent and self-locates to offset `5`):
+
+| Offset | Role |
+|---|---|
+| `0x0` | Self-locating entry (`call`/`pop` trick) |
+| `0x7bc74` | Manual PE-mapper entry point |
+| `0x7ec2b` | Allocates + decrypts (layer 2) + conditionally reverses the embedded target PE, writes the result pointer |
+| `0x8aedf` | Combined gate check (both sub-checks below must pass) |
+| `0x8a2be` | HTTP request to `ipinfo.io` + "ASN type" / `hosting` substring check |
+| `0x8a92c` | Second gate sub-check (criteria not fully pinned down) |
+
+> These addresses/offsets are valid for this specific build of the malware — useful for a YARA rule or unpacking script targeted at this exact sample, but expected to shift in recompiled variants of the same family.

@@ -3,8 +3,9 @@
 ![Status](https://img.shields.io/badge/status-private_research-6a1b9a)
 ![Type](https://img.shields.io/badge/type-educational%20%2F%20incident--response-c62828)
 ![Platform](https://img.shields.io/badge/target-Windows%20x86--64-0078D4)
-![Cipher](https://img.shields.io/badge/cipher-AES--256--CBC-2e7d32)
+![Cipher](https://img.shields.io/badge/cipher-AES--256--CBC%20(2%20layers)-2e7d32)
 ![Verified](https://img.shields.io/badge/kill%20chain-verified%20against%20live%20infra-2e7d32)
+![Payload](https://img.shields.io/badge/final%20payload-recovered-2e7d32)
 
 > **Educational / incident-response repository.** Documents the forensic and reverse-engineering analysis of an InfoStealer that compromised a personal machine. The goal is to understand the full infection chain and the malware's internals for learning and detection purposes.
 >
@@ -16,6 +17,7 @@
 
 - [At a glance](#at-a-glance)
 - [Verified infection chain](#verified-infection-chain)
+- [🔓 The final payload was recovered](#-the-final-payload-was-recovered)
 - [🔎 A lead that was checked — and ruled out](#-a-lead-that-was-checked--and-ruled-out)
 - [Repository contents](#repository-contents)
 - [Status & known limitations](#status--known-limitations)
@@ -32,7 +34,9 @@
 | Packer | Low-entropy filler in `.reloc` (**not** `0x00` bytes, see [finding 1](analysis/02-static-analysis.md#finding-1--the-reloc-padding-is-not-null-bytes)) — inflates the file from 1.4 MB (as delivered) to 126.5 MB |
 | Payload encryption | Real AES-256-CBC via the Windows CryptoAPI (**not** RC4, see [finding 2](analysis/03-dynamic-unpacking.md#finding-2--the-real-cipher-is-aes-256-cbc-not-rc4)) |
 | Control-flow evasion | Windows Thread Pool API (`CreateThreadpoolWork`) instead of a direct call |
-| Status | Payload unpacked down to a manual PE-mapper stub; **the final PE reconstruction and the actual data-theft functions (SQLite3/DPAPI/browser paths) were never reached** — see [Status & known limitations](#status--known-limitations) |
+| Final payload | **Recovered.** A second, self-contained AES-256-CBC-encrypted blob inside the unpacked buffer decrypts to a valid PE — see [below](#-the-final-payload-was-recovered) |
+| Confirmed capability | **Chrome App-Bound Encryption bypass** (targets up-to-date Chrome, not just legacy DPAPI), plus AMSI bypass, NTDLL unhooking, process masquerading, and registry persistence — see [`data-exfiltrated.md`](data-exfiltrated.md) |
+| Status | Final payload recovered and its capabilities confirmed via strings; a byte-level trace of the App-Bound bypass and live network exfiltration were not captured — see [Status & known limitations](#status--known-limitations) |
 
 ## Verified infection chain
 
@@ -52,7 +56,7 @@ flowchart TD
 
 Full breakdown with the real, unmodified scripts: [`analysis/01-initial-access.md`](analysis/01-initial-access.md) and [`stages/`](stages/).
 
-> The initial written incident report this investigation started from described a *different* (and, once verified, inaccurate) mechanism — different URLs, wrong archive password, wrong cipher. See [`analysis/05-c2-infrastructure.md#discrepancy-with-the-initial-report`](analysis/05-c2-infrastructure.md#discrepancy-with-the-initial-report) for the full comparison. This repo documents the **verified** version, confirmed by the affected user directly reproducing the download chain with `curl` on Linux.
+> The initial written incident report this investigation started from described a *different* (and, once verified, inaccurate) mechanism — different URLs, wrong archive password, wrong cipher. See [`analysis/06-c2-infrastructure.md#discrepancy-with-the-initial-report`](analysis/06-c2-infrastructure.md#discrepancy-with-the-initial-report) for the full comparison. This repo documents the **verified** version, confirmed by the affected user directly reproducing the download chain with `curl` on Linux.
 
 **Nothing above was guessed.** Every arrow in that diagram is backed by a request that was actually made and a response that was actually read — including the password. The real dropper script (`stage2_dropper.ps1`) was fetched as plain text and searched directly:
 
@@ -63,6 +67,19 @@ $pw = '10000'
 ```
 
 That's how `10000` was confirmed as the real extraction password — replacing the `ShahradR_Pass2026` guess from the original report. Full command sequence: [`appendix/commands-log.md`](appendix/commands-log.md).
+
+## 🔓 The final payload was recovered
+
+The unpacked buffer turned out to contain **a second, self-contained encrypted blob with its own AES-256 key and IV sitting right next to it** — no external patch or live network fetch needed. One of the mapper's own sub-functions decrypts it, strips PKCS7 padding, and reverses the result byte-for-byte. Reproducing that in ~10 lines of Python produces a fully valid PE:
+
+```
+$ file final_stealer_candidate.exe
+final_stealer_candidate.exe: PE32+ executable for MS Windows 6.00 (GUI), x86-64, 5 sections
+```
+
+Its strings confirm real, current-generation capabilities — most notably a **Chrome App-Bound Encryption bypass** (the literal string `appbound` plus the COM interop needed to call it), the mechanism Chrome introduced in 2024 specifically to stop older DPAPI-based stealers. Also present: an AMSI bypass, `ntdll.dll` unhooking, process-masquerading references (`splwow64.exe`, `RuntimeBroker.exe`, `explorer.exe`), `Run`/`RunOnce` registry persistence, and an `msiexec`-based execution path.
+
+Full extraction recipe, exact offsets, and the complete capability breakdown: [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md). What this means for data at risk: [`data-exfiltrated.md`](data-exfiltrated.md).
 
 ## 🔎 A lead that was checked — and ruled out
 
@@ -95,7 +112,8 @@ So the real next step is still open: [`analysis/04-payload-analysis.md`](analysi
 - [`analysis/02-static-analysis.md`](analysis/02-static-analysis.md) — static analysis of the binary (Cutter/rizin/objdump), PE structure, key addresses.
 - [`analysis/03-dynamic-unpacking.md`](analysis/03-dynamic-unpacking.md) — dynamic unpacking via emulation (Speakeasy/Unicorn), the real cipher, key/IV extraction.
 - [`analysis/04-payload-analysis.md`](analysis/04-payload-analysis.md) — analysis of the unpacked payload (manual PE-mapper stub, strings found).
-- [`analysis/05-c2-infrastructure.md`](analysis/05-c2-infrastructure.md) — C2 beaconing and the discrepancy with the initial report.
+- [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md) — recovering and decrypting the real final payload, and what it's actually capable of.
+- [`analysis/06-c2-infrastructure.md`](analysis/06-c2-infrastructure.md) — C2 beaconing and the discrepancy with the initial report.
 
 **Evidence**
 - [`stages/`](stages/) — the real malicious PowerShell scripts, as inert text files, with warnings.
@@ -105,11 +123,12 @@ So the real next step is still open: [`analysis/04-payload-analysis.md`](analysi
 
 ## Status & known limitations
 
-This analysis **corrected several hypotheses** from the initial report with real evidence from emulation and direct infrastructure verification (see each document above), but stopped short of the actual data-theft functions:
+This analysis **corrected several hypotheses** from the initial report with real evidence from emulation and direct infrastructure verification, and went on to recover and validate the actual final payload (see each document above). What's confirmed vs. still open:
 
-1. The unpacked stub is a *position-independent manual PE-mapper*, not a classic PE with an `MZ` header.
-2. It's missing a pointer (at offset `0xD`) to the final PE image, which normally gets patched right before real execution — this session didn't locate exactly where that patch happens.
-3. As a result, **the real credential/cookie/SQLite3/DPAPI theft functions were never decompiled** — their existence is inferred from the C2 panel type and the malware family's typical design (see [`data-exfiltrated.md`](data-exfiltrated.md)), not confirmed line-by-line.
-4. The [byte-reversal lead](#-a-lead-that-was-checked--and-ruled-out) above was checked and ruled out — it's not the missing piece.
+1. ✅ The unpacked stub is a *position-independent manual PE-mapper*; the pointer it needed (offset `0xD`) turned out to be computed internally, not externally patched — see [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md).
+2. ✅ The final payload was decrypted and validated as a real PE, and its capabilities (App-Bound Encryption bypass, AMSI bypass, NTDLL unhooking, persistence) are confirmed via strings and dynamically-loaded DLLs.
+3. ✅ The [byte-reversal lead](#-a-lead-that-was-checked--and-ruled-out) from earlier was checked and ruled out — it wasn't the missing piece; the real one was found separately.
+4. ⬜ **Not done:** a byte-for-byte trace of the App-Bound Encryption bypass routine, and real network exfiltration traffic — capturing that would need detonating the binary in a monitored, network-isolated VM with a residential-looking egress IP (the malware's own ASN gate refuses to run otherwise, see [`analysis/05-final-payload-capabilities.md`](analysis/05-final-payload-capabilities.md#the-gate-check-explained)).
+5. ⬜ **Not done:** the exact registry key/value name used for persistence, and the precise process-masquerading technique (injection vs. hollowing vs. something else).
 
-Anyone picking this back up should continue from `fcn.140012470` — the address where the pointer from #2 gets patched — since that's the one concrete, still-open thread.
+Anyone picking this back up should start from item 4 — a controlled, monitored detonation is the natural next step now that the static analysis has gone as far as it reasonably can.
