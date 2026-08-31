@@ -66,6 +66,29 @@ source $SCRATCH/malware_venv/bin/activate
 python3 $SCRATCH/unpack_shahradr.py
 ```
 
+## Checking the byte-reversal lead (ruled out — see analysis/03-dynamic-unpacking.md)
+
+```bash
+python3 -c "
+data = open('payload_unpacked.exe','rb').read()
+rev = data[::-1]
+idx = rev.find(b'MZ')
+print('MZ found at offset:', idx)
+print(rev[idx:idx+64].hex())
+"
+# MZ found at offset: 23224
+
+python3 -c "
+import struct
+data = open('payload_unpacked.exe','rb').read()
+rev = data[::-1]
+off = 23224
+e_lfanew = struct.unpack_from('<I', rev, off + 0x3c)[0]
+print('e_lfanew:', hex(e_lfanew), '-> implied PE header at', off + e_lfanew, 'of', len(rev), 'bytes')
+"
+# e_lfanew: 0x6e80000 -> implied PE header at 115890872 of 573600 bytes (out of range -> not a real PE)
+```
+
 ## Extracting strings from the unpacked payload
 
 ```bash

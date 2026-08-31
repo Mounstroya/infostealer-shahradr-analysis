@@ -62,4 +62,36 @@ Static disassembly confirmed that, past the junk-code block, `[rbp - 0x20]` ends
 
 ## What was left unresolved
 
-Decompiling (Ghidra via `rz-ghidra`) the functions involved (`fcn.140012470`, `fcn.140012230`) confirmed part of the memory-allocation logic and a **conditional in-place byte-reversal loop** — but the exact instructions where the CryptoAPI calls themselves happen were **not pinned down** in static disassembly (they show up resolved in the dynamic emulation trace, but not as named symbols in this session's static disassembly). A second, unverified lead surfaced in the last part of the investigation: reversing the entire byte order of the dumped buffer produced an incidental "MZ" match at offset `23224` — this was found right before the investigating session was cut short (see [`../TIMELINE.md`](../TIMELINE.md)) and was **never checked to see whether it's a real PE header or another coincidence** (the earlier, similarly-placed "MZ" match at offset ~23212 in a different buffer was confirmed to be coincidental — see [`04-payload-analysis.md`](04-payload-analysis.md)). Documented here as the next concrete lead for anyone continuing this analysis.
+Decompiling (Ghidra via `rz-ghidra`) the functions involved (`fcn.140012470`, `fcn.140012230`) confirmed part of the memory-allocation logic and a **conditional in-place byte-reversal loop** — but the exact instructions where the CryptoAPI calls themselves happen were **not pinned down** in static disassembly (they show up resolved in the dynamic emulation trace, but not as named symbols in this session's static disassembly).
+
+## Byte-reversal lead — checked, ruled out
+
+Because the binary itself was found to contain a byte-reversal routine, it was worth checking whether the *entire* unpacked buffer needed to be reversed to reveal a real PE. As an experiment, the whole 573,600-byte buffer was reversed byte-for-byte and searched for the `MZ` signature:
+
+```bash
+python3 -c "
+data = open('payload_unpacked.exe','rb').read()
+rev = data[::-1]
+idx = rev.find(b'MZ')
+print('MZ found at offset:', idx)
+print(rev[idx:idx+64].hex())
+"
+```
+
+This reliably finds `MZ` at **offset 23224**. But checking the DOS header's `e_lfanew` field (the 4 bytes at offset `+0x3c`, which should point forward to the real `PE\0\0` header) shows it resolves to an offset far past the end of the 573,600-byte buffer:
+
+```bash
+python3 -c "
+import struct
+data = open('payload_unpacked.exe','rb').read()
+rev = data[::-1]
+off = 23224
+e_lfanew = struct.unpack_from('<I', rev, off + 0x3c)[0]
+print('e_lfanew:', hex(e_lfanew), '-> implied PE header at', off + e_lfanew, 'of', len(rev), 'bytes')
+"
+# e_lfanew: 0x6e80000 -> implied PE header at 115890872 of 573600 bytes  (out of range)
+```
+
+**Conclusion: this is another coincidental byte match, not a real PE header** — the same pattern as the earlier, similarly-placed "MZ" match at offset ~23212 in the non-reversed buffer (see [`04-payload-analysis.md`](04-payload-analysis.md)), which was already known to be coincidental. Reversing the whole buffer is not the missing step.
+
+The actual next step for anyone continuing this analysis is still the one described in [`04-payload-analysis.md`](04-payload-analysis.md#whats-needed-to-reach-the-actual-stealer-functions): locate where `fcn.140012470` patches the pointer at offset `0xD`, and let the mapper run one step further with that pointer already in place.

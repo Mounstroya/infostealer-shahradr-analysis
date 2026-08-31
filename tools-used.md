@@ -2,7 +2,6 @@
 
 | Tool | Version | What it was used for |
 |---|---|---|
-| **Claude Code** | v2.1.246 | AI agent that drove the investigation interactively: environment recon, setting up and debugging the emulation environment, writing the unpacking script, driving rizin/Ghidra, and synthesizing findings. |
 | **Debian GNU/Linux** | — | Analysis host. No passwordless `sudo` at any point — everything was done in user space. |
 | **`curl`** | — | Reproduced the stage-1/stage-2 PowerShell fetches and the archive download directly against the live infrastructure, without ever executing the returned content. Also used to discover the User-Agent gating behavior of the C2. |
 | **`dd`** | — | Truncated (*unpadded*) the 126.5 MB binary down to a functional 5 MB copy (`bs=1M count=5`), stripping the low-entropy padding without losing any real code. |

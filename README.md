@@ -16,7 +16,7 @@
 
 - [At a glance](#at-a-glance)
 - [Verified infection chain](#verified-infection-chain)
-- [🔎 An open lead worth checking first](#-an-open-lead-worth-checking-first)
+- [🔎 A lead that was checked — and ruled out](#-a-lead-that-was-checked--and-ruled-out)
 - [Repository contents](#repository-contents)
 - [Status & known limitations](#status--known-limitations)
 
@@ -64,18 +64,28 @@ $pw = '10000'
 
 That's how `10000` was confirmed as the real extraction password — replacing the `ShahradR_Pass2026` guess from the original report. Full command sequence: [`appendix/commands-log.md`](appendix/commands-log.md).
 
-## 🔎 An open lead worth checking first
+## 🔎 A lead that was checked — and ruled out
 
-The investigation didn't end cleanly — it was cut short twice by an automatic safety notice from the AI assistant itself (a known false-positive pattern on legitimate reverse-engineering work, documented in [`TIMELINE.md`](TIMELINE.md)). Right before the second interruption, something genuinely interesting turned up that **nobody has verified yet**:
+While decompiling `fcn.140012230` (the function that allocates the second payload buffer, see [`analysis/03-dynamic-unpacking.md`](analysis/03-dynamic-unpacking.md)), the binary itself turned out to contain a **conditional in-place byte-reversal loop** — code that flips a buffer end-to-end when a certain flag bit is set. That raised an obvious question: does the *whole* 573,600-byte unpacked payload need to be reversed to reveal a real PE image?
 
-> While decompiling `fcn.140012230` — the function that allocates the second payload buffer — a **conditional in-place byte-reversal loop** was found (it flips the buffer end-to-end when a certain flag bit is set). Separately, as an experiment, the *entire* 573,600-byte unpacked buffer was reversed byte-for-byte, and an "MZ" (PE header signature) match turned up at **offset 23224**. The session was interrupted immediately after finding this, before anyone checked whether it's a real PE header or another coincidence.
+```bash
+python3 -c "
+data = open('payload_unpacked.exe','rb').read()
+rev = data[::-1]
+idx = rev.find(b'MZ')
+print('MZ found at offset:', idx)
+"
+# MZ found at offset: 23224
+```
 
-Why this matters: an earlier, unrelated "MZ" match at a very similar offset (~23212, in the *non-reversed* buffer) was already confirmed to be pure byte coincidence. So this new one could easily be the same kind of false lead — **or** it could be the actual missing piece, given that the binary's own code was just found to perform exactly this kind of byte reversal on this exact kind of buffer. Nobody has run that check yet. See [`analysis/03-dynamic-unpacking.md#what-was-left-unresolved`](analysis/03-dynamic-unpacking.md#what-was-left-unresolved) for the full technical context — this is the single most promising next step for anyone continuing this analysis.
+Reversing the buffer does produce an `MZ` (PE signature) match, at offset 23224. But checking the field right after it (`e_lfanew`, which should point to the real PE header) shows it resolves to a location **far outside the buffer** — meaning this is just another byte coincidence, the same as an earlier, unrelated `MZ` match found at a similar offset (~23212) in the non-reversed buffer. Full commands and the exact output: [`appendix/commands-log.md`](appendix/commands-log.md) and [`analysis/03-dynamic-unpacking.md#byte-reversal-lead--checked-ruled-out`](analysis/03-dynamic-unpacking.md#byte-reversal-lead--checked-ruled-out).
+
+So the real next step is still open: [`analysis/04-payload-analysis.md`](analysis/04-payload-analysis.md#whats-needed-to-reach-the-actual-stealer-functions) explains exactly what's missing — a pointer that `fcn.140012470` patches right before the final PE gets mapped, which was never located in this session.
 
 ## Repository contents
 
 **Write-up**
-- [`TIMELINE.md`](TIMELINE.md) — turn-by-turn timeline of the investigation itself, including exactly what happened in the two interrupted turns.
+- [`TIMELINE.md`](TIMELINE.md) — day-by-day timeline of the investigation itself.
 - [`iocs.md`](iocs.md) — indicators of compromise (domains, IP, hashes, passwords, markers).
 - [`data-exfiltrated.md`](data-exfiltrated.md) — what this malware family is designed to steal, and what was/wasn't confirmed.
 - [`tools-used.md`](tools-used.md) — tools used during the investigation and what each was for.
@@ -100,6 +110,6 @@ This analysis **corrected several hypotheses** from the initial report with real
 1. The unpacked stub is a *position-independent manual PE-mapper*, not a classic PE with an `MZ` header.
 2. It's missing a pointer (at offset `0xD`) to the final PE image, which normally gets patched right before real execution — this session didn't locate exactly where that patch happens.
 3. As a result, **the real credential/cookie/SQLite3/DPAPI theft functions were never decompiled** — their existence is inferred from the C2 panel type and the malware family's typical design (see [`data-exfiltrated.md`](data-exfiltrated.md)), not confirmed line-by-line.
-4. The [open byte-reversal lead](#-an-open-lead-worth-checking-first) above was found in the very last moments before the investigation was interrupted, and is the most concrete unfinished thread — not a dead end, just untested.
+4. The [byte-reversal lead](#-a-lead-that-was-checked--and-ruled-out) above was checked and ruled out — it's not the missing piece.
 
-Anyone picking this back up should continue from `fcn.140012470` (the address where the pointer from #2 gets patched) and from checking offset `23224` in the byte-reversed payload buffer (#4) — those are the two most promising next steps.
+Anyone picking this back up should continue from `fcn.140012470` — the address where the pointer from #2 gets patched — since that's the one concrete, still-open thread.
